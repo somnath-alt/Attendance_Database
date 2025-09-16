@@ -1,8 +1,8 @@
--- 1. Create Database
+--  Create Database
 CREATE DATABASE IF NOT EXISTS attendence_checking;
 USE attendence_checking;
 
--- 2. Classes Table
+-- Classes Table
 CREATE TABLE Classes (
     class_id VARCHAR(10) PRIMARY KEY,
     course_name VARCHAR(50),
@@ -10,7 +10,7 @@ CREATE TABLE Classes (
     INDEX idx_class_id (class_id)
 );
 
--- 3. Students Table (added student_attendance column)
+--  Students Table (added student_attendance column)
 CREATE TABLE Students (
     student_id VARCHAR(10) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE Students (
     INDEX idx_student_id (student_id)
 );
 
--- 4. Sessions Table
+-- Sessions Table
 CREATE TABLE Sessions (
     session_id INT AUTO_INCREMENT PRIMARY KEY,
     class_id VARCHAR(10),
@@ -33,7 +33,7 @@ CREATE TABLE Sessions (
     INDEX idx_session_date (session_date)
 );
 
--- 5. Attendance Table
+--  Attendance Table
 CREATE TABLE Attendance (
     attendance_id INT AUTO_INCREMENT PRIMARY KEY,
     student_id VARCHAR(10),
@@ -45,7 +45,7 @@ CREATE TABLE Attendance (
     INDEX idx_scan_time (scan_time)
 );
 
--- 6. Analytics Table
+--  Analytics Table
 CREATE TABLE Analytics (
     analytics_id INT AUTO_INCREMENT PRIMARY KEY,
     class_id VARCHAR(10),
@@ -57,7 +57,7 @@ CREATE TABLE Analytics (
     FOREIGN KEY (session_id) REFERENCES Sessions(session_id)
 );
 
--- 7. Procedure to Mark Attendance (updated with student_attendance increment)
+--  Procedure to Mark Attendance (updated with student_attendance increment)
 DELIMITER //
 CREATE PROCEDURE MarkAttendance (
     IN p_student_id VARCHAR(10),
@@ -141,7 +141,7 @@ BEGIN
 END //
 DELIMITER ;
 
--- 9. Data Cleaning Procedure
+--  Data Cleaning Procedure
 DELIMITER //
 CREATE PROCEDURE CleanAttendanceData()
 BEGIN
