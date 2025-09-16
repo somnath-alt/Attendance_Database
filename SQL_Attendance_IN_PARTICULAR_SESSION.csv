@@ -1,0 +1,5 @@
+student_id,name,course_name,session_date,status
+S101,Harshit,Math,"2025-09-16 10:00:00",Absent
+S102,Somnath,Math,"2025-09-16 10:00:00",Present
+S103,Hemang,Math,"2025-09-16 10:00:00",Present
+S104,Adil,Math,"2025-09-16 10:00:00",Absent

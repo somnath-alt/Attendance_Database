@@ -1,0 +1,5 @@
+student_id,name,email,class_id,student_attendance,photo
+S101,Harshit,harshit@example.com,C101,0,NULL
+S102,Somnath,somnath@example.com,C101,0,NULL
+S103,Hemang,hemang@example.com,C101,0,NULL
+S104,Adil,adil@example.com,C101,0,NULL
