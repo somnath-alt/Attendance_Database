@@ -1,53 +1,69 @@
---  Create Database
-CREATE DATABASE IF NOT EXISTS attendence_checking;
-USE attendence_checking;
+-- 1. Create Database
 
--- Classes Table
+IF DB_ID('Attendance_Checking') IS NOT NULL
+    DROP DATABASE Attendance_Checking;
+GO
+
+CREATE DATABASE Attendance_Checking;
+GO
+USE Attendance_Checking;
+GO
+
+
+-- 2. Classes Table
+
 CREATE TABLE Classes (
     class_id VARCHAR(10) PRIMARY KEY,
     course_name VARCHAR(50),
-    faculty_id VARCHAR(10),
-    INDEX idx_class_id (class_id)
+    faculty_id VARCHAR(10)
 );
+GO
 
---  Students Table (added student_attendance column)
+
+-- 3. Students Table
+
 CREATE TABLE Students (
     student_id VARCHAR(10) PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE,
     class_id VARCHAR(10),
     student_attendance INT DEFAULT 0, -- tracks total valid attendance
-    photo BLOB,
-    FOREIGN KEY (class_id) REFERENCES Classes(class_id),
-    INDEX idx_student_id (student_id)
+    photo VARBINARY(MAX) NULL,
+    FOREIGN KEY (class_id) REFERENCES Classes(class_id)
 );
+GO
 
--- Sessions Table
+
+-- 4. Sessions Table
+
 CREATE TABLE Sessions (
-    session_id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id INT IDENTITY(1,1) PRIMARY KEY,
     class_id VARCHAR(10),
     session_date DATETIME,
     qr_code VARCHAR(255) UNIQUE,
     attendance_count INT DEFAULT 0,
-    FOREIGN KEY (class_id) REFERENCES Classes(class_id),
-    INDEX idx_session_date (session_date)
+    FOREIGN KEY (class_id) REFERENCES Classes(class_id)
 );
+GO
 
---  Attendance Table
+-- 5. Attendance Table
+
 CREATE TABLE Attendance (
-    attendance_id INT AUTO_INCREMENT PRIMARY KEY,
+    attendance_id INT IDENTITY(1,1) PRIMARY KEY,
     student_id VARCHAR(10),
     session_id INT,
     scan_time DATETIME,
-    status ENUM('Present', 'Invalid') DEFAULT 'Present',
+    status VARCHAR(20) DEFAULT 'Present',
     FOREIGN KEY (student_id) REFERENCES Students(student_id),
-    FOREIGN KEY (session_id) REFERENCES Sessions(session_id),
-    INDEX idx_scan_time (scan_time)
+    FOREIGN KEY (session_id) REFERENCES Sessions(session_id)
 );
+GO
 
---  Analytics Table
+
+-- 6. Analytics Table
+
 CREATE TABLE Analytics (
-    analytics_id INT AUTO_INCREMENT PRIMARY KEY,
+    analytics_id INT IDENTITY(1,1) PRIMARY KEY,
     class_id VARCHAR(10),
     session_id INT,
     report_date DATE,
@@ -56,154 +72,204 @@ CREATE TABLE Analytics (
     FOREIGN KEY (class_id) REFERENCES Classes(class_id),
     FOREIGN KEY (session_id) REFERENCES Sessions(session_id)
 );
+GO
 
---  Procedure to Mark Attendance (updated with student_attendance increment)
-DELIMITER //
-CREATE PROCEDURE MarkAttendance (
-    IN p_student_id VARCHAR(10),
-    IN p_qr_code VARCHAR(255),
-    IN p_scan_time DATETIME
-)
+
+-- 7. Procedure: MarkAttendance
+
+IF OBJECT_ID('dbo.MarkAttendance', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.MarkAttendance;
+GO
+
+CREATE PROCEDURE dbo.MarkAttendance
+    @p_student_id VARCHAR(10),
+    @p_qr_code    VARCHAR(255),
+    @p_scan_time  DATETIME
+AS
 BEGIN
-    DECLARE v_session_id INT;
-    DECLARE v_class_id VARCHAR(10);
-    DECLARE v_count INT;
+    SET NOCOUNT ON;
 
-    START TRANSACTION;
+    DECLARE @v_session_id INT;
+    DECLARE @v_class_id   VARCHAR(10);
+    DECLARE @v_count      INT;
 
-    -- Find session by QR code (valid for 15 minutes)
-    SELECT session_id, class_id INTO v_session_id, v_class_id
-    FROM Sessions
-    WHERE qr_code = p_qr_code
-      AND p_scan_time BETWEEN session_date AND session_date + INTERVAL 15 MINUTE;
+    BEGIN TRANSACTION;
+    BEGIN TRY
+        -- Find session by QR code (valid for 15 minutes)
+        SELECT TOP (1)
+            @v_session_id = session_id,
+            @v_class_id   = class_id
+        FROM Sessions
+        WHERE qr_code = @p_qr_code
+          AND @p_scan_time BETWEEN session_date AND DATEADD(MINUTE, 15, session_date);
 
-    IF v_session_id IS NOT NULL THEN
-        -- Check if student is enrolled in the class
-        SELECT COUNT(*) INTO v_count
-        FROM Students
-        WHERE student_id = p_student_id AND class_id = v_class_id;
+        IF @v_session_id IS NOT NULL
+        BEGIN
+            -- Check if student enrolled
+            SELECT @v_count = COUNT(*)
+            FROM Students
+            WHERE student_id = @p_student_id
+              AND class_id   = @v_class_id;
 
-        IF v_count > 0 THEN
-            -- Check for duplicate scan
-            SELECT COUNT(*) INTO v_count
-            FROM Attendance
-            WHERE student_id = p_student_id AND session_id = v_session_id;
+            IF @v_count > 0
+            BEGIN
+                -- Duplicate scan check
+                SELECT @v_count = COUNT(*)
+                FROM Attendance
+                WHERE student_id = @p_student_id
+                  AND session_id = @v_session_id;
 
-            IF v_count = 0 THEN
-                -- Insert attendance record
-                INSERT INTO Attendance (student_id, session_id, scan_time, status)
-                VALUES (p_student_id, v_session_id, p_scan_time, 'Present');
+                IF @v_count = 0
+                BEGIN
+                    INSERT INTO Attendance (student_id, session_id, scan_time, status)
+                    VALUES (@p_student_id, @v_session_id, @p_scan_time, 'Present');
 
-                -- Increment session attendance count
-                UPDATE Sessions
-                SET attendance_count = attendance_count + 1
-                WHERE session_id = v_session_id;
+                    UPDATE Sessions
+                    SET attendance_count = attendance_count + 1
+                    WHERE session_id = @v_session_id;
 
-                -- Increment student's total attendance
-                UPDATE Students
-                SET student_attendance = student_attendance + 1
-                WHERE student_id = p_student_id;
+                    UPDATE Students
+                    SET student_attendance = student_attendance + 1
+                    WHERE student_id = @p_student_id;
 
-                COMMIT;
-                SELECT 'Attendance marked successfully' AS message;
+                    COMMIT TRANSACTION;
+                    PRINT 'Attendance marked successfully';
+                END
+                ELSE
+                BEGIN
+                    ROLLBACK TRANSACTION;
+                    PRINT 'Duplicate scan detected';
+                END
+            END
             ELSE
-                ROLLBACK;
-                SELECT 'Duplicate scan detected' AS message;
-            END IF;
+            BEGIN
+                ROLLBACK TRANSACTION;
+                PRINT 'Student not enrolled in class';
+            END
+        END
         ELSE
-            ROLLBACK;
-            SELECT 'Student not enrolled in class' AS message;
-        END IF;
-    ELSE
-        ROLLBACK;
-        SELECT 'Invalid or expired QR code' AS message;
-    END IF;
-END //
-DELIMITER ;
+        BEGIN
+            ROLLBACK TRANSACTION;
+            PRINT 'Invalid or expired QR code';
+        END
+    END TRY
+    BEGIN CATCH
+        IF XACT_STATE() <> 0
+            ROLLBACK TRANSACTION;
 
---  Procedure to Generate Analytics
-DELIMITER //
-CREATE PROCEDURE GenerateAnalytics (
-    IN p_class_id VARCHAR(10),
-    IN p_session_id INT
-)
+        DECLARE @ErrMsg NVARCHAR(4000) = ERROR_MESSAGE();
+        DECLARE @ErrNum INT = ERROR_NUMBER();
+        RAISERROR('MarkAttendance failed (Err %d): %s', 16, 1, @ErrNum, @ErrMsg);
+    END CATCH
+END;
+GO
+
+
+-- 8. Procedure: GenerateAnalytics
+
+IF OBJECT_ID('dbo.GenerateAnalytics', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.GenerateAnalytics;
+GO
+
+CREATE PROCEDURE dbo.GenerateAnalytics
+    @p_class_id   VARCHAR(10),
+    @p_session_id INT
+AS
 BEGIN
-    DECLARE v_total INT;
-    DECLARE v_absentees INT;
+    SET NOCOUNT ON;
 
-    SELECT COUNT(*) INTO v_total FROM Students WHERE class_id = p_class_id;
-    SELECT COUNT(*) INTO v_absentees FROM Attendance WHERE session_id = p_session_id AND status = 'Present';
+    DECLARE @v_total     INT;
+    DECLARE @v_attendees INT;
+
+    SELECT @v_total = COUNT(*) 
+    FROM Students 
+    WHERE class_id = @p_class_id;
+
+    SELECT @v_attendees = COUNT(*) 
+    FROM Attendance 
+    WHERE session_id = @p_session_id
+      AND status = 'Present';
 
     INSERT INTO Analytics (class_id, session_id, report_date, total_attendees, absentee_count)
-    VALUES (p_class_id, p_session_id, CURDATE(), v_absentees, v_total - v_absentees);
+    VALUES (@p_class_id, @p_session_id, CAST(GETDATE() AS DATE), @v_attendees, @v_total - @v_attendees);
 
-    SELECT 'Analytics generated' AS message;
-END //
-DELIMITER ;
+    PRINT 'Analytics generated';
+END;
+GO
 
---  Data Cleaning Procedure
-DELIMITER //
-CREATE PROCEDURE CleanAttendanceData()
+
+-- 9. Procedure: CleanAttendanceData
+
+IF OBJECT_ID('dbo.CleanAttendanceData', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.CleanAttendanceData;
+GO
+
+CREATE PROCEDURE dbo.CleanAttendanceData
+AS
 BEGIN
+    SET NOCOUNT ON;
+
     -- Remove duplicate scans (keep earliest)
-    DELETE a1
-    FROM Attendance a1
-    JOIN Attendance a2
-      ON a1.student_id = a2.student_id
-     AND a1.session_id = a2.session_id
-     AND a1.scan_time > a2.scan_time;
+    ;WITH Ranked AS (
+        SELECT attendance_id,
+               ROW_NUMBER() OVER (PARTITION BY student_id, session_id ORDER BY scan_time ASC) AS rn
+        FROM Attendance
+    )
+    DELETE FROM Attendance
+    WHERE attendance_id IN (SELECT attendance_id FROM Ranked WHERE rn > 1);
 
     -- Mark invalid scans (after 15 min of session start)
-    UPDATE Attendance a
-    JOIN Sessions s ON a.session_id = s.session_id
+    UPDATE a
     SET a.status = 'Invalid'
-    WHERE a.scan_time > s.session_date + INTERVAL 15 MINUTE;
-END //
-DELIMITER ;
+    FROM Attendance a
+    JOIN Sessions s ON a.session_id = s.session_id
+    WHERE a.scan_time > DATEADD(MINUTE, 15, s.session_date);
+
+    PRINT 'Attendance data cleaned';
+END;
+GO
 
 
-  
--- Checking the Attendance status for all students in a particular session
+-- 10. Sample Data
 
-SELECT s.student_id, s.name, c.course_name, se.session_date,
-       COALESCE(a.status, 'Absent') AS status
-FROM Students s
-JOIN Classes c ON s.class_id = c.class_id
-JOIN Sessions se ON se.class_id = c.class_id
-LEFT JOIN Attendance a 
-       ON s.student_id = a.student_id 
-      AND se.session_id = a.session_id
-WHERE se.session_id = 1;
-  
-
-
--- Check Process
-SELECT student_id, name, student_attendance
-FROM Students;
-
+-- Classes
 INSERT INTO Classes (class_id, course_name, faculty_id)
-VALUES ('C101', 'Math', 'F001');
+VALUES ('C101', 'Database Systems', 'F001');
 
+-- Students
 INSERT INTO Students (student_id, name, email, class_id)
 VALUES 
-('S101', 'Harshit', 'harshit@example.com', 'C101'),
-('S102', 'Somnath', 'somnath@example.com', 'C101'),
-('S103', 'Hemang',  'hemang@example.com',  'C101'),
-('S104', 'Adil',    'adil@example.com',    'C101');
+('S101', 'Harshit',  'harshit@example.com', 'C101'),
+('S102', 'Somnath',  'somnath@example.com', 'C101'),
+('S103', 'Hemang',   'hemang@example.com', 'C101'),
+('S104', 'Adil',     'adil@example.com',   'C101');
 
-SELECT * FROM students;
+-- Session
 INSERT INTO Sessions (class_id, session_date, qr_code)
-VALUES ('C101', '2025-09-16 10:00:00', 'QR123');
+VALUES ('C101', '2025-09-17 10:00:00', 'QR123');
 
-SELECT * FROM Sessions;
 
-CALL MarkAttendance('S103', 'QR123', '2025-09-16 10:05:00'); -- Hemang
-CALL MarkAttendance('S102', 'QR123', '2025-09-16 10:07:00'); -- Somnath
+-- 11. Test Calls
 
-SELECT * FROM Attendance;
-select* FROM Students;
+-- Mark Attendance
+EXEC MarkAttendance 'S101', 'QR123', '2025-09-17 10:05:00'; -- Harshit Present
+EXEC MarkAttendance 'S102', 'QR123', '2025-09-17 10:07:00'; -- Somnath Present
+EXEC MarkAttendance 'S103', 'QR123', '2025-09-17 10:20:00'; -- Hemang Late -> Invalid
+EXEC MarkAttendance 'S104', 'QR123', '2025-09-17 10:10:00'; -- Adil Present
 
-CALL GenerateAnalytics('C101', 1);
+-- Generate Analytics
+EXEC GenerateAnalytics 'C101', 1;
 
-SELECT * FROM Analytics;
+-- Clean Data
+EXEC CleanAttendanceData;
+
+
+-- 12. Check Results
+
+SELECT * FROM Students;   -- Attendance totals per student
+SELECT * FROM Sessions;   -- Attendance count per session
+SELECT * FROM Attendance; -- All scans
+SELECT * FROM Analytics;  -- Analytics summary
+GO
+
 
